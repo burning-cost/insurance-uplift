@@ -42,8 +42,11 @@ def qini_curve(
     """Compute the Qini curve for uplift model evaluation.
 
     The Qini curve plots, for each fraction of the customer base targeted
-    in descending order of predicted τ̂(x), the incremental number of
-    renewals attributable to targeting (relative to no targeting).
+    in descending order of predicted τ̂(x) (highest first), the incremental
+    number of renewals attributable to targeting (relative to no targeting).
+
+    Customers are ranked by τ̂(x) descending. Higher τ̂(x) = stronger
+    positive treatment response = higher priority for intervention.
 
     For continuous treatment, the treatment vector is binarised at its
     median: customers with above-median price increases are "treated",
@@ -187,6 +190,11 @@ def uplift_at_k(
     tau, what fraction of the maximum possible incremental renewals do I
     achieve?"
 
+    The "maximum achievable gain" is the peak of the Qini curve — the point
+    where additional targeting yields no incremental benefit. This is used
+    rather than the gain at 100% targeting (which can decline as lower-tau
+    customers are added to the treatment pool).
+
     Parameters
     ----------
     y_true:
@@ -220,8 +228,12 @@ def uplift_at_k(
     idx = max(0, min(idx, len(gains) - 1))
     gain_at_k = gains[idx]
 
-    # Maximum achievable gain (all customers targeted)
-    max_gain = gains[-1]
+    # Peak Qini gain across all targeting fractions is the denominator.
+    # Using gains[-1] (100% targeting) fails when the curve peaks before k=1,
+    # which is common in mixed populations with DND customers. Using the peak
+    # gives a well-defined [0, 1] metric: "what fraction of the best achievable
+    # targeting outcome does this k% capture?"
+    max_gain = float(gains.max())
     if max_gain <= 0:
         warnings.warn(
             "Total Qini gain is non-positive. uplift_at_k is not meaningful.",
@@ -230,7 +242,7 @@ def uplift_at_k(
         )
         return 0.0
 
-    return float(gain_at_k / max_gain)
+    return float(min(gain_at_k / max_gain, 1.0))
 
 
 def segment_types(
@@ -242,50 +254,58 @@ def segment_types(
     """Classify customers into the Guelman et al. four-customer taxonomy.
 
     The four types are defined by the combination of observed outcome and
-    predicted treatment effect:
+    predicted treatment effect. The partition is exhaustive — every customer
+    belongs to exactly one segment.
 
-    - **Persuadable**: τ̂(x) < −threshold and Y=0 (lapsed without discount,
-      would likely retain with one). These are the primary discount targets.
-    - **Sure Thing**: τ̂(x) ≈ 0 (|τ| ≤ threshold) and Y=1 (renewed regardless).
-      Discounting wastes margin.
-    - **Lost Cause**: τ̂(x) ≈ 0 (|τ| ≤ threshold) and Y=0 (lapsed regardless).
-      No intervention effect.
-    - **Do Not Disturb**: τ̂(x) > threshold (positive: price increase would
-      *increase* renewal probability, i.e. contact or rate change provokes
-      comparison shopping). Avoid any intervention.
+    - **Persuadable**: τ̂(x) < −threshold and Y=0 (lapsed; price-sensitive
+      enough that a discount would have changed their decision). Primary
+      discount targets.
+    - **Do Not Disturb**: τ̂(x) > threshold (positive: inelastic or
+      comparison-shopping risk). Any price reduction wasted or
+      counterproductive. Avoid intervention.
+    - **Sure Thing**: not DND, Y=1 (renewed regardless of price sensitivity).
+      Discounting wastes margin — they were going to renew anyway.
+    - **Lost Cause**: not DND, not Persuadable, Y=0 (lapsed despite not
+      being strongly price-sensitive). No realistic intervention effect.
 
     Note on sign convention: in this library, τ̂(x) is the effect of a +1 unit
     increase in log price on renewal probability. A negative τ̂(x) means the
     customer is price-sensitive (price increase → lapse). A Persuadable customer
-    has τ̂(x) < 0 (they are sensitive to price increases) combined with having
-    actually lapsed.
+    has τ̂(x) < −threshold combined with having actually lapsed.
 
     Parameters
     ----------
     y_true:
         Binary renewal outcome.
     treatment:
-        Treatment indicator or continuous treatment.
+        Treatment indicator or continuous treatment (unused in classification,
+        retained for API consistency).
     tau_hat:
         Predicted CATE (τ̂(x)).
     threshold:
-        Absolute threshold for "approximately zero" τ. Customers with
-        |τ̂(x)| ≤ threshold are classified as Sure Thing or Lost Cause
-        depending on their outcome.
+        Sensitivity threshold. Only customers with τ̂(x) < −threshold are
+        classified as Persuadable; only customers with τ̂(x) > threshold are
+        classified as Do Not Disturb. Default 0 classifies all non-zero-tau
+        customers by sign.
 
     Returns
     -------
     pl.DataFrame
         Columns: ``[segment_type, n, fraction, avg_tau, min_tau, max_tau]``
-        One row per segment type.
+        One row per segment type. Fractions sum to 1.0.
     """
     y = to_numpy(y_true)
     tau = to_numpy(tau_hat)
 
-    persuadable = (tau < -abs(threshold)) & (y == 0)
-    sure_thing = (np.abs(tau) <= abs(threshold)) & (y == 1)
-    lost_cause = (np.abs(tau) <= abs(threshold)) & (y == 0)
-    do_not_disturb = tau > abs(threshold)
+    thresh = abs(threshold)
+
+    # Exhaustive, non-overlapping partition:
+    do_not_disturb = tau > thresh
+    persuadable = (tau < -thresh) & (y == 0)
+    # Sure Thing: not DND (tau <= thresh), and renewed
+    sure_thing = (~do_not_disturb) & (y == 1)
+    # Lost Cause: not DND, not Persuadable (tau >= -thresh), and lapsed
+    lost_cause = (~do_not_disturb) & (~persuadable) & (y == 0)
 
     n = len(y)
     rows = []

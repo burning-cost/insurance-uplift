@@ -40,6 +40,24 @@ import polars as pl
 from ._utils import log_price_ratio, validate_panel_columns
 
 
+def _cast_to_date(col: pl.Series) -> pl.Series:
+    """Normalise a column to pl.Date, handling Utf8 and Datetime variants.
+
+    Pandas DataFrames converted to Polars via ``pl.from_pandas`` produce
+    Datetime(time_unit='ms') columns for date columns. Polars 1.x does not
+    support comparison operators between Datetime and Python ``date`` objects,
+    so we normalise to Date here.
+    """
+    if col.dtype == pl.Utf8:
+        return col.str.to_date()
+    if col.dtype.is_(pl.Date):
+        return col
+    # Handle Datetime variants (e.g. from pandas conversion)
+    if hasattr(col.dtype, "time_unit") or str(col.dtype).startswith("Datetime"):
+        return col.dt.date()
+    return col
+
+
 class RetentionPanel:
     """Build a policy-level renewal panel for uplift modelling.
 
@@ -117,14 +135,17 @@ class RetentionPanel:
         self.censor_date = censor_date
         self._built: Optional[pl.DataFrame] = None
 
-    def _resolve_censor_date(self) -> date:
-        """Return the censor date, inferring from data if not provided."""
+    def _resolve_censor_date(self, end_col: pl.Series) -> date:
+        """Return the censor date, inferring from data if not provided.
+
+        Parameters
+        ----------
+        end_col:
+            The end_date column, already normalised to pl.Date.
+        """
         if self.censor_date is not None:
             return self.censor_date
-        col = self._df[self.end_date_col]
-        if col.dtype == pl.Utf8:
-            col = col.str.to_date()
-        max_date = col.max()
+        max_date = end_col.max()
         if max_date is None:
             raise ValueError("Cannot infer censor_date: end_date column is empty.")
         warnings.warn(
@@ -174,12 +195,18 @@ class RetentionPanel:
         treatment = log_price_ratio(r, e)
         df = df.with_columns(pl.Series("treatment", treatment))
 
+        # Normalise date columns to pl.Date.
+        # Pandas DataFrames converted via pl.from_pandas produce Datetime(time_unit='ms')
+        # columns, which Polars 1.x cannot compare directly with Python date objects.
+        end_col_norm = _cast_to_date(df[self.end_date_col])
+        df = df.with_columns(end_col_norm.alias(self.end_date_col))
+
+        if self.start_date_col in df.columns:
+            start_col_norm = _cast_to_date(df[self.start_date_col])
+            df = df.with_columns(start_col_norm.alias(self.start_date_col))
+
         # Resolve censor date and flag censored policies
-        censor_date = self._resolve_censor_date()
-        end_col = df[self.end_date_col]
-        if end_col.dtype == pl.Utf8:
-            end_col = end_col.str.to_date()
-            df = df.with_columns(end_col.alias(self.end_date_col))
+        censor_date = self._resolve_censor_date(df[self.end_date_col])
 
         censored = (df[self.end_date_col] > censor_date).cast(pl.Int8)
         df = df.with_columns(censored.alias("censored_flag"))
@@ -198,20 +225,9 @@ class RetentionPanel:
 
         # Earned exposure
         if self.start_date_col in df.columns:
-            start_col = df[self.start_date_col]
-            if start_col.dtype == pl.Utf8:
-                start_col = start_col.str.to_date()
-                df = df.with_columns(start_col.alias(self.start_date_col))
-
-            from datetime import timedelta
-
-            censor_dt = pl.lit(censor_date)
-            start_dt = df[self.start_date_col]
-            end_dt = df[self.end_date_col]
-
             # Exposure = min(end_date, censor_date) - start_date, as fraction of year
-            # Clip end date to censor date for censored policies
-            policy_duration = (end_dt - start_dt).dt.total_seconds() / (365.25 * 86400)
+            # Clip end date to censor date for censored policies.
+            # Iterate row-by-row to handle Python date arithmetic correctly.
             elapsed = (
                 pl.Series(
                     [

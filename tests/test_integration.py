@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+
+
 import warnings
 from datetime import date
 
@@ -9,6 +11,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+pytest.importorskip("econml")
 
 class TestFullPipeline:
     """Run the complete pipeline and verify the outputs chain correctly."""

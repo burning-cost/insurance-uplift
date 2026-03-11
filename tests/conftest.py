@@ -146,7 +146,11 @@ def clean_panel(built_panel):
 
 @pytest.fixture(scope="session")
 def fitted_model(clean_panel):
-    """Fitted RetentionUpliftModel — session-scoped so it only trains once."""
+    """Fitted RetentionUpliftModel — session-scoped so it only trains once.
+
+    Skips automatically if econml is not available.
+    """
+    econml = pytest.importorskip("econml", reason="econml not available")
     from insurance_uplift.fit import RetentionUpliftModel
     import warnings
 

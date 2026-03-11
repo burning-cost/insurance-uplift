@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+
+
 import warnings
 
 import numpy as np
 import polars as pl
 import pytest
+
+pytest.importorskip("econml")
 
 from insurance_uplift.segment import PolicyTree, SegmentSummary
 

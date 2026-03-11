@@ -138,7 +138,15 @@ class TestUpliftAtK:
         assert isinstance(result, float)
 
     def test_k_equals_1_is_1(self):
-        y, t, tau, _ = make_evaluate_data()
+        # Use a DGP where all tau > 0 so the Qini curve is monotonically
+        # increasing — then gain at k=1 equals gains.max().
+        rng = np.random.default_rng(7)
+        n = 1000
+        tau = rng.uniform(0.1, 0.8, n)  # all positive: monotone Qini
+        t = rng.binomial(1, 0.5, n).astype(float)
+        base = rng.normal(0.5, 0.3, n)
+        prob = 1 / (1 + np.exp(-(base + tau * t)))
+        y = rng.binomial(1, prob, n).astype(float)
         result = uplift_at_k(y, t, tau, k=1.0)
         assert abs(result - 1.0) < 0.05
 

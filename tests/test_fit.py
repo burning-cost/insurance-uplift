@@ -8,6 +8,9 @@ import numpy as np
 import polars as pl
 import pytest
 
+# Skip entire module if econml is not available (Python 3.12 + numpy 2.x incompatibility)
+pytest.importorskip("econml")
+
 from insurance_uplift.fit import RetentionUpliftModel
 
 
