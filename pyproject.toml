@@ -34,7 +34,7 @@ classifiers = [
     "Topic :: Office/Business :: Financial",
 ]
 dependencies = [
-    "polars>=0.20",
+    "polars>=1.0",
     "econml>=0.15.1,<0.17",
     "catboost>=1.2",
     "scipy>=1.11",
