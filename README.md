@@ -41,12 +41,64 @@ Dependencies: polars, econml, catboost, scipy, matplotlib, numpy, scikit-learn.
 ## Quick start
 
 ```python
+import numpy as np
 import polars as pl
+from datetime import date
 from insurance_uplift.data import RetentionPanel
 from insurance_uplift.fit import RetentionUpliftModel
 from insurance_uplift.evaluate import auuc, segment_types
 from insurance_uplift.segment import PolicyTree
 from insurance_uplift.constrain import ENBPConstraint, FairnessAudit, ROIReport
+
+rng = np.random.default_rng(42)
+n = 1000
+
+# Synthetic UK motor renewal panel
+age = rng.integers(18, 75, n)
+ncd = rng.integers(0, 5, n)
+vehicle_age = rng.integers(0, 12, n)
+region = rng.choice(["London", "SE", "NW", "Midlands", "Scotland"], n)
+age_band = (age // 10 * 10).astype(str)
+postcode_income_decile = rng.integers(1, 11, n)
+
+expiring_premium = rng.uniform(300, 1200, n)
+# True price elasticity: younger and higher-NCD customers more sensitive
+true_tau = -0.4 - 0.005 * np.maximum(40 - age, 0) - 0.03 * ncd
+# Rate change: mix of increases and flat renewals (post-GIPP, no walkbacks)
+rate_change_log = rng.normal(0.03, 0.05, n)
+renewal_premium = expiring_premium * np.exp(rate_change_log)
+enbp = expiring_premium * rng.uniform(0.88, 0.98, n)  # ENBP slightly below expiring
+
+# Renewal probability: logistic function of true_tau * rate_change
+renew_prob = 1 / (1 + np.exp(-(0.8 + true_tau * rate_change_log)))
+renewed = rng.binomial(1, renew_prob)
+
+# Policy dates (all ending within the last 12 months)
+import datetime
+end_dates = [
+    date(2024, 9, 30) - datetime.timedelta(days=int(d))
+    for d in rng.integers(0, 365, n)
+]
+start_dates = [
+    ed - datetime.timedelta(days=365)
+    for ed in end_dates
+]
+
+df = pl.DataFrame({
+    "policy_id": [f"POL{i:05d}" for i in range(n)],
+    "age": age,
+    "ncd": ncd,
+    "vehicle_age": vehicle_age,
+    "region": region,
+    "age_band": age_band,
+    "postcode_income_decile": postcode_income_decile,
+    "expiring_premium": expiring_premium,
+    "renewal_premium": renewal_premium,
+    "enbp": enbp,
+    "renewed": renewed,
+    "start_date": start_dates,
+    "end_date": end_dates,
+})
 
 # 1. Build the panel
 panel_obj = RetentionPanel(
@@ -80,8 +132,13 @@ recommendations = tree.recommend(clean)
 print(tree.export_rules())
 
 # 6. Apply ENBP constraint
+# rec_rate_changes: recommended log rate change per customer.
+# Persuadable customers (tau < 0) get a discount; others get no change.
+rec_rate_changes = pl.Series(
+    "rec_rate_change",
+    np.where(tau.to_numpy() < 0, -0.05, 0.0),  # -5% discount for persuadables
+)
 constraint = ENBPConstraint()
-rec_rate_changes = ...  # derive from tau
 clipped = constraint.apply(clean, rec_rate_changes)
 audit = constraint.audit_report(clean, rec_rate_changes)
 
