@@ -27,6 +27,9 @@ import warnings
 from typing import Optional, Union
 
 import numpy as np
+
+# NumPy 2.0 removed numpy.trapz; use numpy.trapezoid if available
+_trapz = getattr(np, "trapezoid", getattr(np, "trapz", None))
 import polars as pl
 
 from ._utils import ArrayLike, binarise_treatment, to_numpy
@@ -174,7 +177,7 @@ def auuc(
     random_baseline = fractions * total_gain
 
     # Area between curve and baseline, using trapezoid rule
-    auuc_val = float(np.trapz(gains - random_baseline, fractions))
+    auuc_val = float(_trapz(gains - random_baseline, fractions))
     return auuc_val
 
 

@@ -190,7 +190,7 @@ class RetentionUpliftModel:
                 model_final=GradientBoostingRegressor(
                     n_estimators=200, random_state=self.random_state
                 ),
-                cv=KFold(n_splits=self.n_folds),
+                cv=KFold(n_splits=self.n_folds, shuffle=True, random_state=self.random_state),
                 random_state=self.random_state,
             )
 
@@ -387,14 +387,17 @@ class RetentionUpliftModel:
         """
         self._check_fitted()
         if self.estimator == "causal_forest":
-            ate_result = self._model.ate_(self._train_X)
+            # econml 0.15+ raises for continuous treatments with ate_()/ate_interval_()
+            # Wrap both calls so we fall through to the mean-of-effects estimate on any error.
             try:
+                ate_result = self._model.ate_(self._train_X)
                 ci = self._model.ate_interval_(self._train_X, alpha=0.05)
                 return float(ate_result), float(ci[0]), float(ci[1])
             except Exception:
                 pass
 
-        # Fallback: estimate from training predictions
+        # Fallback: estimate from training predictions (works for all estimators and
+        # continuous treatments regardless of econml version)
         tau_train = self._model.effect(self._train_X).ravel()
         ate_est = float(np.mean(tau_train))
         ate_std = float(np.std(tau_train) / np.sqrt(len(tau_train)))

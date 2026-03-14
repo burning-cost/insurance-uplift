@@ -150,9 +150,16 @@ class PolicyTree:
         tau_hat = self._tree.predict(X_np)
 
         if self.budget_constraint is not None:
+            # Target the n_target customers with the most negative predicted tau
+            # (highest price sensitivity / Persuadable) up to the budget limit.
+            # Use argsort-based approach to guarantee the count constraint is met
+            # regardless of ties.
             n_target = int(np.floor(self.budget_constraint * len(tau_hat)))
-            threshold = np.sort(tau_hat)[max(0, len(tau_hat) - n_target - 1)]
-            recommend = (tau_hat <= threshold).astype(np.int32)
+            recommend = np.zeros(len(tau_hat), dtype=np.int32)
+            if n_target > 0:
+                # argsort ascending: first n_target indices are the most negative
+                top_negative_idx = np.argsort(tau_hat)[:n_target]
+                recommend[top_negative_idx] = 1
         else:
             recommend = (tau_hat < 0).astype(np.int32)
 
