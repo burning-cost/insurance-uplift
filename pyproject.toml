@@ -46,7 +46,7 @@ dependencies = [
 [project.optional-dependencies]
 survival = ["lifelines>=0.27", "rpy2>=3.5"]
 policytree = ["rpy2>=3.5"]
-dev = ["pytest>=7.0", "pytest-cov"]
+dev = ["pytest>=7.0", "pytest-cov", "pyarrow>=12.0", "pandas>=2.0"]
 
 [project.urls]
 Homepage = "https://github.com/burning-cost/insurance-uplift"

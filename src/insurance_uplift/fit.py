@@ -30,6 +30,7 @@ import warnings
 from typing import Literal, Optional
 
 import numpy as np
+from sklearn.model_selection import KFold
 import polars as pl
 
 from ._utils import to_numpy, to_numpy_2d, validate_min_samples, validate_panel_columns
@@ -174,7 +175,7 @@ class RetentionUpliftModel:
                 n_estimators=self.n_estimators,
                 discrete_treatment=False,
                 min_samples_leaf=self.min_samples_leaf,
-                n_crossfit_splits=self.n_folds,
+                cv=self.n_folds,
                 inference=self.inference,
                 random_state=self.random_state,
             )
@@ -189,7 +190,7 @@ class RetentionUpliftModel:
                 model_final=GradientBoostingRegressor(
                     n_estimators=200, random_state=self.random_state
                 ),
-                cv=self.n_folds,
+                cv=KFold(n_splits=self.n_folds),
                 random_state=self.random_state,
             )
 
